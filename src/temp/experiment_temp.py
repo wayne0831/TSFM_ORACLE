@@ -1,3 +1,7 @@
+import os
+os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+os.environ["HF_HUB_DISABLE_SYMLINKS"] = "1"
+
 import pandas as pd
 import numpy as np
 import torch
@@ -6,20 +10,20 @@ from torch.utils.data import DataLoader, Dataset
 import matplotlib.pyplot as plt
 
 # ==========================================
-# [TO-DO] 환경에 맞게 라이브러리 임포트 경로를 수정하세요
+# [Hugging Face 공식 문서 반영] timesfm 임포트
 # ==========================================
-# from timesfm import TimesFM_2p5_200M_torch, ForecastConfig
+import timesfm
 
 # ==========================================
-# 1. 환경 변수 및 설정 (업데이트 완료)
+# 1. 환경 변수 및 설정
 # ==========================================
 FILE_PATH = './data/ETTm1.csv'
 TARGET_COL = 'OT'
 C = 96  # Context Length
 H = 30  # Horizon Length
 S = 1   # Step Size
-EPOCHS = 10 # Initial Training 에폭
-MAX_TEST_STEPS = None # 테스트를 빠르게 확인하기 위한 제한 (전체 실행시 None으로 변경)
+EPOCHS = 3 # Initial Training 에폭
+MAX_TEST_STEPS = None # 전체 실행
 
 # TimesFM 설정
 TSFM_MODEL_VER = 'google/timesfm-2.5-200m-pytorch'
@@ -31,9 +35,9 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 class TimeSeriesDataset(Dataset):
     def __init__(self, data, context_len, horizon, step):
         self.data = data
-        self.c = context_len
-        self.h = horizon
-        self.s = step
+        self.c    = context_len
+        self.h    = horizon
+        self.s    = step
         self.indices = range(0, len(data) - context_len - horizon + 1, step)
 
     def __len__(self):
@@ -66,38 +70,48 @@ class SimpleTransformer(nn.Module):
 
 
 class TimesFMWrapper:
-    """Domain-neutral Model (TimesFM - 2.5 200M Torch 버전에 맞춘 래퍼)"""
+    """Domain-neutral Model (TimesFM 2.5 공식 스니펫 기반 래퍼)"""
     def __init__(self, model_ver, cl=96, hl=30, device="cuda"):
         print(f"Loading TimesFM: {model_ver} on {device}...")
         
-        # 1. 제시해주신 API 형식으로 초기화
-        self.tsfm = TimesFM_2p5_200M_torch.from_pretrained(model_ver)
-        tsfm_config = ForecastConfig(
-            max_context=cl, 
-            max_horizon=hl, 
-            use_continuous_quantile_head=True, 
-            normalize_inputs=True # 모델 내부 정규화(Instance Norm) 활성화
+        # 1. from_pretrained로 모델 로드 (torch_compile 옵션 적용)
+        self.tsfm = timesfm.TimesFM_2p5_200M_torch.from_pretrained(
+            model_ver, 
+            torch_compile=True if device == "cuda" else False
         )
         
-        # 2. 모델 컴파일 및 디바이스 할당
-        self.tsfm.compile(tsfm_config)
-        self.tsfm.model.to(device)
+        # 2. ForecastConfig 컴파일 (제공해주신 스니펫 반영)
+        self.tsfm.compile(
+            timesfm.ForecastConfig(
+                max_context=cl,
+                max_horizon=hl,
+                normalize_inputs=True,
+                use_continuous_quantile_head=True,
+                force_flip_invariance=True,
+                # ETTm1은 영하 기온 등 음수 값이 존재하므로 False를 추천합니다. (양수만 다루는 도메인이면 True)
+                infer_is_positive=False, 
+                fix_quantile_crossing=True,
+            )
+        )
         self.hl = hl
 
     def predict(self, context_array, horizon):
         """표준 TimesFM 예측 및 Quantile(PI) 추출"""
         
-        # forecast 메서드는 예측값과 분위수(quantile) 정보를 튜플로 반환합니다.
-        f_out, f_quantiles = self.tsfm.forecast(inputs=[context_array], horizon=horizon)
+        # 3. 모델 예측 (제공해주신 스니펫 반영)
+        point_forecast, quantile_forecast = self.tsfm.forecast(
+            horizon=horizon, 
+            inputs=[context_array]
+        )
         
-        # (1) Point Forecast
-        pred_values = f_out[0]
+        # Point Forecast: shape (batch=1, horizon)
+        pred_values = point_forecast[0]
         
-        # (2) Prediction Interval (PI)
-        quantiles_output = f_quantiles[0] 
+        # Quantile Forecast: shape (batch=1, horizon, 10) -> [mean, 10th, 20th... 90th]
+        quantiles_output = quantile_forecast[0] 
         
-        # 하한(최소 퀀타일)과 상한(최대 퀀타일)을 추출하여 PI 밴드 구성
-        pi_lower = quantiles_output[:, 0]
+        # [중요] 0번 인덱스는 'mean'이므로, 1번 인덱스를 10th(하한)로 사용합니다.
+        pi_lower = quantiles_output[:, 1]
         pi_upper = quantiles_output[:, -1]
         
         return pred_values, {'upper': pi_upper, 'lower': pi_lower}
@@ -198,7 +212,7 @@ def main():
     print("\n3. 온라인 예측 및 LinUCB 평가 시작...")
     model_D.eval()
     
-    # [적용] 업데이트된 모델 래퍼 로드
+    # 모델 래퍼 로드
     model_F = TimesFMWrapper(model_ver=TSFM_MODEL_VER, cl=C, hl=H, device=DEVICE)
     
     extractor = ContextExtractor(window_size=H)
