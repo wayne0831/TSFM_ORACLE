@@ -15,7 +15,7 @@ import torch
 DEVICE      = 'cuda' if torch.cuda.is_available() else 'cpu'
 DATA        = 'Etth1, Etth2, Ettm1, Ettm2, Electricity, Exchange, Solar, Weather'
 TSFM_METHOD = 'TimesFM'
-FT_METHOD   = 'LoRA'
+#FT_METHOD   = 'LoRA'
 
 ###########################################################################################################
 # set hyperparmeters configurations
@@ -23,21 +23,22 @@ FT_METHOD   = 'LoRA'
 
 # name: TimesFM_cl[96]_hl[192]_LoRA_fr[0.7],r[4]_a[16]_d[0.1]_tgt[qkv_proj_out_ff0_ff1]_e[5]_bs[32]
 PARAMS = {
+    'Common': {
+        'con_len': '96',                  # context length
+        'hor_len': '30', #'96, 192, 336, 720',   # horizon length
+        'step_size': '1',                 # step size for sliding window
+    },
     'TimesFM': {
         'version': 'google/timesfm-2.5-200m-pytorch',
         'patch_size': '32',          # ver. 1.0: 64 / ver. 2.5: 32 /
-        'cl': '96',                  # context length
-        'hl': '96, 192, 336, 720',   # horizon length
     },
-    'FT_RATIO': '0.7',
-    'LoRA': {
-        'rank': '2',
-        'alpha': '8',
-        'dropout': '0.1',
-        'target_modules': '[["qkv_proj", "out"]]', # '[["qkv_proj", "out"], ["ff0", "ff1"], ["qkv_proj", "out", "ff0", "ff1"]]',
-        'lr': '1e-4',
-        'epochs': '10',
-        'batch_size': '16',
+    'Transformer':{
+        'seed': '42',
+        'epochs': '5',
+        'batch_size': '32',
+        'learning_rate': '0.001',
+        'weight_decay': '0.01',
+        'num_workers': '4',
     }
 }
 
@@ -57,21 +58,24 @@ DATA_PATH = {
     'Weather':      './data/weather.csv',
 }
 CHK_PATH  = {
-    'LoRA': f'./checkpoints/LoRA/',
+    'Transformer': f'./checkpoints/Transformer/',
 }
 RES_PATH  = {
     'plot': { # .png
         'TimesFM': f'./results/plot/TimesFM/',
-        'LoRA': f'./results/plot/LoRA/',
+        'Transformer': f'./results/plot/Transformer/',
+        'Ensemble': f'./results/plot/Ensemble/',
     },
     'predictions': { # .npy
         'TimesFM': f'./results/predictions/TimesFM/',
-        'LoRA': f'./results/predictions/LoRA/',
+        'Transformer': f'./results/predictions/Transformer/',
+        'Ensemble': f'./results/predictions/Ensemble/',
     },
     'performance': { # .csv
         'TimesFM': f'./results/performance/TimesFM/',
-        'LoRA': f'./results/performance/LoRA/',
-    },
+        'Transformer': f'./results/performance/Transformer/',
+        'Ensemble': f'./results/performance/Ensemble/',
+    }
 }
 
 ###########################################################################################################
@@ -89,10 +93,10 @@ DATASET = {
     'Weather':      {'target_col': 'OT'}
 }
 
-PIPELINE = {
-    'TimesFM':  True,
-    'LoRA':     True,
-}
+# PIPELINE = {
+#     'TimesFM':  True,
+#     'LoRA':     True,
+# }
 
 
 # if __name__ == "__main__":
@@ -107,7 +111,7 @@ PIPELINE = {
 #     for cl, hl in product(cl_list, hl_list):
 #         print(f'cl: {cl}, hl: {hl}') # 따옴표를 넣어 공백 제거 확인
 
-if __name__ == "__main__":
-    if torch.cuda.is_available():
-        print(f"GPU 사용 가능 여부: {torch.cuda.is_available()}")
-        print(f"현재 디바이스: {torch.cuda.get_device_name(0)}")
+# if __name__ == "__main__":
+#     if torch.cuda.is_available():
+#         print(f"GPU 사용 가능 여부: {torch.cuda.is_available()}")
+#         print(f"현재 디바이스: {torch.cuda.get_device_name(0)}")
